@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+//go test -cover -coverprofile=cover.pb.gz
+//PASS
+//coverage: 100.0% of statements
+//ok      github.com/gdpu11/ttl-syncmap   21.338s
+//go tool cover -html=cover.pb.gz
+
 func TestNewTTLSyncMap(t *testing.T) {
 	m := NewTTLSyncMap(5 * time.Second)
 	m.Store(1, 1)
