@@ -7,12 +7,14 @@ import (
 
 //TTLSyncMap 带有时效性的缓存
 type TTLSyncMap struct {
+	//有效时长
 	ttl  time.Duration
 	data sync.Map
 }
 
-type cacheExpireMap struct {
-	val      interface{}
+type ttlVal struct {
+	val interface{}
+	// 过期时间
 	expireAt time.Time
 }
 
@@ -21,10 +23,10 @@ func NewTTLSyncMap(ttl time.Duration) *TTLSyncMap {
 	return &TTLSyncMap{ttl, sync.Map{}}
 }
 
-//Load ...
+//Load 查询
 func (c *TTLSyncMap) Load(key interface{}) (data interface{}, ok bool) {
 	if d, ok := c.data.Load(key); ok && d != nil {
-		if m, okMap := d.(cacheExpireMap); okMap {
+		if m, okMap := d.(ttlVal); okMap {
 			if time.Since(m.expireAt) <= c.ttl {
 				return m.val, true
 			}
@@ -35,9 +37,9 @@ func (c *TTLSyncMap) Load(key interface{}) (data interface{}, ok bool) {
 	return nil, false
 }
 
-//Store ...
+//Store 存储
 func (c *TTLSyncMap) Store(key interface{}, val interface{}) {
-	c.data.Store(key, cacheExpireMap{val: val, expireAt: time.Now()})
+	c.data.Store(key, ttlVal{val: val, expireAt: time.Now()})
 }
 
 //Delete 删除key
