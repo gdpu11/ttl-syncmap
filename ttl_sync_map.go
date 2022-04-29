@@ -26,14 +26,13 @@ func NewTTLSyncMap(ttl time.Duration) *TTLSyncMap {
 //Load 查询
 func (c *TTLSyncMap) Load(key interface{}) (data interface{}, ok bool) {
 	if d, ok := c.data.Load(key); ok && d != nil {
-		if m, okMap := d.(ttlVal); okMap {
-			if time.Since(m.expireAt) <= c.ttl {
-				return m.val, true
-			}
-			c.data.Delete(key)
-			return nil, false
+		m := d.(ttlVal)
+		if time.Since(m.expireAt) <= c.ttl {
+			return m.val, true
 		}
+		c.data.Delete(key)
 	}
+
 	return nil, false
 }
 
@@ -45,6 +44,47 @@ func (c *TTLSyncMap) Store(key interface{}, val interface{}) {
 //Delete 删除key
 func (c *TTLSyncMap) Delete(key interface{}) {
 	c.data.Delete(key)
+}
+
+// LoadOrStore returns the existing value for the key if present.
+// Otherwise, it stores and returns the given value.
+// The loaded result is true if the value was loaded, false if stored.
+//LoadOrStore返回键的现有值（如果存在）。
+//否则，它将存储并返回给定的值。
+//如果加载了值，则加载的结果为true；如果存储了值，则加载的结果为false。
+func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
+	if val, ok := c.data.LoadOrStore(key, value); ok && val != nil {
+		return val.(ttlVal).val, ok
+	}
+	return nil, false
+}
+
+// LoadAndDelete deletes the value for a key, returning the previous value if any.
+// The loaded result reports whether the key was present.
+//LoadAndDelete删除键的值，如果有，则返回上一个值。
+//加载的结果报告密钥是否存在。
+func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
+	if val, ok := c.data.LoadAndDelete(key); ok && val != nil {
+		return val.(ttlVal).val, ok
+	}
+	return nil, false
+}
+
+// Range calls f sequentially for each key and value present in the map.
+// If f returns false, range stops the iteration.
+//
+// Range does not necessarily correspond to any consistent snapshot of the Map's
+// contents: no key will be visited more than once, but if the value for any key
+// is stored or deleted concurrently, Range may reflect any mapping for that key
+// from any point during the Range call.
+//
+// Range may be O(N) with the number of elements in the map even if f returns
+// false after a constant number of calls.
+func (c *TTLSyncMap) Range(f func(key, value interface{}) bool) {
+	ff := func(key, value interface{}) bool {
+		return f(key, value.(ttlVal).val)
+	}
+	c.data.Range(ff)
 }
 
 //Clear 清空
