@@ -65,6 +65,62 @@ func TestTTLSyncMap_Delete(t *testing.T) {
 	}
 }
 
+func TestTTLSyncMap_LoadOrStore(t *testing.T) {
+	m := NewTTLSyncMap(5 * time.Second)
+	d, ok := m.LoadOrStore(1, 1)
+	if ok || d != 1 {
+		t.Fatal("LoadOrStore error", ok, d)
+	}
+	d, ok = m.LoadOrStore(1, 1)
+	if !ok || d != 1 {
+		t.Fatal("LoadOrStore error", ok, d)
+	}
+	time.Sleep(5 * time.Second)
+	d, ok = m.LoadOrStore(1, 1)
+	if ok || d != 1 {
+		t.Fatal("LoadOrStore error", ok, d)
+	}
+}
+
+func TestTTLSyncMap_LoadAndDelete(t *testing.T) {
+	m := NewTTLSyncMap(5 * time.Second)
+	d, ok := m.LoadAndDelete(1)
+	if ok || d != nil {
+		t.Fatal("LoadAndDelete error", ok, d)
+	}
+	m.Store(1, 1)
+	d, ok = m.LoadAndDelete(1)
+	if !ok || d != 1 {
+		t.Fatal("LoadOrStore error", ok, d)
+	}
+	m.Store(1, 1)
+	time.Sleep(5 * time.Second)
+	d, ok = m.LoadAndDelete(1)
+	if ok || d != nil {
+		t.Fatal("LoadOrStore error", ok, d)
+	}
+}
+
+func TestTTLSyncMap_Range(t *testing.T) {
+	m := NewTTLSyncMap(5 * time.Second)
+	m.Store(1, 1)
+	m.Range(func(key, value interface{}) bool {
+		if key == 1 && value != 1 {
+			t.Fatal("key and value not equal")
+			return false
+		}
+		return key == 1 && value == 1
+	})
+	time.Sleep(5 * time.Second)
+	m.Range(func(key, value interface{}) bool {
+		if key == 1 && value != nil {
+			t.Fatal("value not expire")
+			return false
+		}
+		return key == 1 && value == nil
+	})
+}
+
 func TestTTLSyncMap_Clear(t *testing.T) {
 	m := NewTTLSyncMap(5 * time.Second)
 	m.Store(1, 1)

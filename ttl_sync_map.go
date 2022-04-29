@@ -53,10 +53,11 @@ func (c *TTLSyncMap) Delete(key interface{}) {
 //否则，它将存储并返回给定的值。
 //如果加载了值，则加载的结果为true；如果存储了值，则加载的结果为false。
 func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
-	val, ok := c.data.LoadOrStore(key, ttlVal{val: value, expireAt: time.Now()})
-	if ok && val != nil {
-		return val.(ttlVal).val, ok
+	d, ok := c.data.Load(key)
+	if ok && d != nil && time.Since(d.(ttlVal).expireAt) <= c.ttl {
+		return d.(ttlVal).val, true
 	}
+	c.data.Store(key, ttlVal{val: value, expireAt: time.Now()})
 	return value, false
 }
 
@@ -65,8 +66,9 @@ func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, lo
 //LoadAndDelete删除键的值，如果有，则返回上一个值。
 //加载的结果报告密钥是否存在。
 func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
-	if val, ok := c.data.LoadAndDelete(key); ok && val != nil {
-		return val.(ttlVal).val, ok
+	d, ok := c.data.LoadAndDelete(key)
+	if ok && d != nil && time.Since(d.(ttlVal).expireAt) <= c.ttl {
+		return d.(ttlVal).val, true
 	}
 	return nil, false
 }
@@ -82,8 +84,12 @@ func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded b
 // Range may be O(N) with the number of elements in the map even if f returns
 // false after a constant number of calls.
 func (c *TTLSyncMap) Range(f func(key, value interface{}) bool) {
-	ff := func(key, value interface{}) bool {
-		return f(key, value.(ttlVal).val)
+	ff := func(key, d interface{}) bool {
+		m := d.(ttlVal)
+		if time.Since(m.expireAt) <= c.ttl {
+			return f(key, d.(ttlVal).val)
+		}
+		return f(key, nil)
 	}
 	c.data.Range(ff)
 }
