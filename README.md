@@ -5,7 +5,7 @@
 go get -u github.com/gdpu11/ttl-syncmap
 ```
 
-##使用
+## 使用
 
 ```go
 m := NewTTLSyncMap(5 * time.Second)
