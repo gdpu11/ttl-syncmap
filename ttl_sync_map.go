@@ -53,10 +53,11 @@ func (c *TTLSyncMap) Delete(key interface{}) {
 //否则，它将存储并返回给定的值。
 //如果加载了值，则加载的结果为true；如果存储了值，则加载的结果为false。
 func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
-	if val, ok := c.data.LoadOrStore(key, value); ok && val != nil {
+	val, ok := c.data.LoadOrStore(key, ttlVal{val: value, expireAt: time.Now()})
+	if ok && val != nil {
 		return val.(ttlVal).val, ok
 	}
-	return nil, false
+	return value, false
 }
 
 // LoadAndDelete deletes the value for a key, returning the previous value if any.
