@@ -69,6 +69,18 @@ func TestTTLSyncMap_Delete(t *testing.T) {
 	if d, ok := m.Load(1); ok || d == 1 {
 		t.Fatal("val is expire", ok, d)
 	}
+	i := 0
+	m.Range(func(key, value interface{}) bool {
+		i++
+		if value == nil || !(key == 1 && value == 1) {
+			t.Fatal("value not expire", key, value)
+			return false
+		}
+		return true
+	})
+	if i > 0 {
+		t.Fatal(i)
+	}
 }
 
 func TestTTLSyncMap_LoadOrStore(t *testing.T) {
@@ -100,6 +112,7 @@ func TestTTLSyncMap_LoadAndDelete(t *testing.T) {
 		t.Fatal("LoadOrStore error", ok, d)
 	}
 	m.Store(1, 1)
+	//wait to expire and delete
 	time.Sleep(5 * time.Second)
 	d, ok = m.LoadAndDelete(1)
 	if ok || d != nil {
@@ -136,5 +149,17 @@ func TestTTLSyncMap_Clear(t *testing.T) {
 	m.Clear()
 	if d, ok := m.Load(1); ok || d == 1 {
 		t.Fatal("val is expire", ok, d)
+	}
+	i := 0
+	m.Range(func(key, value interface{}) bool {
+		i++
+		if value == nil || !(key == 1 && value == 1) {
+			t.Fatal("value not expire", key, value)
+			return false
+		}
+		return true
+	})
+	if i > 0 {
+		t.Fatal(i)
 	}
 }
