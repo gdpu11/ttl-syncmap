@@ -85,11 +85,14 @@ func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded b
 // false after a constant number of calls.
 func (c *TTLSyncMap) Range(f func(key, value interface{}) bool) {
 	ff := func(key, d interface{}) bool {
-		m := d.(ttlVal)
-		if time.Since(m.expireAt) <= c.ttl {
-			return f(key, d.(ttlVal).val)
+		if d != nil {
+			m := d.(ttlVal)
+			if time.Since(m.expireAt) <= c.ttl {
+				return f(key, d.(ttlVal).val)
+			}
+			c.data.Delete(key)
 		}
-		return f(key, nil)
+		return true
 	}
 	c.data.Range(ff)
 }

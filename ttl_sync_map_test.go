@@ -106,18 +106,18 @@ func TestTTLSyncMap_Range(t *testing.T) {
 	m.Store(1, 1)
 	m.Range(func(key, value interface{}) bool {
 		if key == 1 && value != 1 {
-			t.Fatal("key and value not equal")
+			t.Fatal("key and value not equal", key, value)
 			return false
 		}
 		return key == 1 && value == 1
 	})
 	time.Sleep(5 * time.Second)
 	m.Range(func(key, value interface{}) bool {
-		if key == 1 && value != nil {
-			t.Fatal("value not expire")
+		if value == nil || !(key == 1 && value == 1) {
+			t.Fatal("value not expire", key, value)
 			return false
 		}
-		return key == 1 && value == nil
+		return true
 	})
 }
 
