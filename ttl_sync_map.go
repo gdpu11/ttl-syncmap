@@ -1,4 +1,4 @@
-package util
+package ttlSyncMap
 
 import (
 	"sync"
