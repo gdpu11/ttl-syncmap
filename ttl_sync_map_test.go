@@ -1,6 +1,7 @@
 package ttlSyncMap
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -161,5 +162,27 @@ func TestTTLSyncMap_Clear(t *testing.T) {
 	})
 	if i > 0 {
 		t.Fatal(i)
+	}
+}
+
+var (
+	ttlM = NewTTLSyncMap(time.Minute)
+	m    = sync.Map{}
+)
+
+//go test -bench=. -run=^a -benchmem -count=3 -memprofile=mem.pb.gz
+func BenchmarkTTLSyncMap_Store(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1000; j++ {
+			ttlM.Store(j, j)
+		}
+	}
+}
+
+func BenchmarkSyncMap_Store(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1000; j++ {
+			m.Store(j, j)
+		}
 	}
 }
