@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-//TTLSyncMap 带有时效性的缓存
+//TTLSyncMap 带有时效性的SyncMap
 type TTLSyncMap struct {
 	//有效时长
 	ttl  time.Duration
@@ -18,8 +18,8 @@ type ttlVal struct {
 	expireAt time.Time
 }
 
-//NewTTLSyncMap 谨慎使用，仅适用于较少元素且又高频的数据
-func NewTTLSyncMap(ttl time.Duration) *TTLSyncMap {
+//New 谨慎使用，仅适用于较少元素且又高频的数据
+func New(ttl time.Duration) *TTLSyncMap {
 	return &TTLSyncMap{ttl, sync.Map{}}
 }
 

@@ -6,14 +6,17 @@ import (
 	"time"
 )
 
+//go test -bench=. -run=^a -benchmem -count=3 -memprofile=mem.pb.gz
 //go test -cover -coverprofile=cover.pb.gz
+//go tool pprof -http=:6565 mem.pb.gz
+//go tool cover -html=coverage.out
 //PASS
 //coverage: 100.0% of statements
 //ok      github.com/gdpu11/ttl-syncmap   21.338s
 //go tool cover -html=cover.pb.gz
 
 func TestNewTTLSyncMap(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	m.Store(1, 1)
 	time.Sleep(5 * time.Second)
 	if d, ok := m.Load(1); ok || d == 1 {
@@ -27,7 +30,7 @@ func TestNewTTLSyncMap(t *testing.T) {
 }
 
 func TestTTLSyncMap_Store(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	m.Store(1, 1)
 	if d, ok := m.Load(1); !ok || d != 1 {
 		t.Fatal("val is expire", ok, d)
@@ -44,7 +47,7 @@ func TestTTLSyncMap_Store(t *testing.T) {
 }
 
 func TestTTLSyncMap_Load(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	m.Store(1, 1)
 	if d, ok := m.Load(1); !ok || d != 1 {
 		t.Fatal("val is expire", ok, d)
@@ -61,7 +64,7 @@ func TestTTLSyncMap_Load(t *testing.T) {
 }
 
 func TestTTLSyncMap_Delete(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	m.Store(1, 1)
 	if d, ok := m.Load(1); !ok || d != 1 {
 		t.Fatal("val is expire", ok, d)
@@ -85,7 +88,7 @@ func TestTTLSyncMap_Delete(t *testing.T) {
 }
 
 func TestTTLSyncMap_LoadOrStore(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	d, ok := m.LoadOrStore(1, 1)
 	if ok || d != 1 {
 		t.Fatal("LoadOrStore error", ok, d)
@@ -102,7 +105,7 @@ func TestTTLSyncMap_LoadOrStore(t *testing.T) {
 }
 
 func TestTTLSyncMap_LoadAndDelete(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	d, ok := m.LoadAndDelete(1)
 	if ok || d != nil {
 		t.Fatal("LoadAndDelete error", ok, d)
@@ -122,7 +125,7 @@ func TestTTLSyncMap_LoadAndDelete(t *testing.T) {
 }
 
 func TestTTLSyncMap_Range(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	m.Store(1, 1)
 	m.Range(func(key, value interface{}) bool {
 		if key == 1 && value != 1 {
@@ -142,7 +145,7 @@ func TestTTLSyncMap_Range(t *testing.T) {
 }
 
 func TestTTLSyncMap_Clear(t *testing.T) {
-	m := NewTTLSyncMap(5 * time.Second)
+	m := New(5 * time.Second)
 	m.Store(1, 1)
 	if d, ok := m.Load(1); !ok || d != 1 {
 		t.Fatal("val is expire", ok, d)
@@ -166,7 +169,7 @@ func TestTTLSyncMap_Clear(t *testing.T) {
 }
 
 var (
-	ttlM = NewTTLSyncMap(time.Minute)
+	ttlM = New(time.Minute)
 	m    = sync.Map{}
 )
 
