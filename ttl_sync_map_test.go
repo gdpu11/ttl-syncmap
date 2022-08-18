@@ -15,6 +15,19 @@ import (
 //ok      github.com/gdpu11/ttl-syncmap   21.338s
 //go tool cover -html=cover.pb.gz
 
+func TestConcurrentClearAndStore(t *testing.T) {
+	m := New(2 * time.Minute)
+	go func() {
+		for i := 0; i < 100; i++ {
+			time.Sleep(time.Millisecond * 10)
+			m.Clear()
+		}
+	}()
+	for i := 0; i < 1000000; i++ {
+		m.Store(i, i)
+	}
+}
+
 func TestNewTTLSyncMap(t *testing.T) {
 	m := New(5 * time.Second)
 	m.Store(1, 1)
@@ -173,7 +186,7 @@ var (
 	m    = sync.Map{}
 )
 
-//go test -bench=. -run=^a -benchmem -count=3 -memprofile=mem.pb.gz
+// go test -bench=. -run=^a -benchmem -count=3 -memprofile=mem.pb.gz
 func BenchmarkTTLSyncMap_Store(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < 1000; j++ {
