@@ -1,4 +1,4 @@
-package ttlSyncMap
+package ttlsyncmap
 
 import (
 	"sync"
@@ -9,12 +9,14 @@ import (
 const (
 	//clearDataDelayTime 清除数据时，延迟多久清空，避免切换下标的时候还有用户在读，会有panic
 	clearDataDelayTime = 200 * time.Millisecond
+	defaultTimerAging  = 10 * time.Second
 )
 
 // TTLSyncMap 并发安全，带有时效性的缓存
 type TTLSyncMap struct {
 	data     [2]sync.Map   // 数据段 ps:unsafe.Sizeof=80
 	ttl      time.Duration // 有效时间，比如1个小时：time.Hour ps:unsafe.Sizeof=8
+	timerAge time.Duration // 数据淘汰定时器:time.Hour ps:unsafe.Sizeof=8
 	clearing int32         // 并发清除数据时，只允许一个穿透进去清理 ps:unsafe.Sizeof=4
 	idx      int8          // 当前使用的下标 ps:unsafe.Sizeof=1
 }
@@ -25,14 +27,16 @@ type ttlVal struct {
 	expireAt time.Time
 }
 
-// New 谨慎使用，仅适用于较少元素且又高频的数据
+// New New
 func New(ttl time.Duration) *TTLSyncMap {
-	return &TTLSyncMap{
+	t := &TTLSyncMap{
 		data:     [2]sync.Map{{}, {}},
 		clearing: 0,
 		ttl:      ttl,
 		idx:      0,
 	}
+	t.aging()
+	return t
 }
 
 // Load 查询
@@ -102,7 +106,7 @@ func (c *TTLSyncMap) Range(f func(key, value interface{}) bool) {
 			if time.Since(m.expireAt) <= c.ttl {
 				return f(key, d.(ttlVal).val)
 			}
-			c.data[c.idx].Delete(key)
+			c.Delete(key)
 		}
 		return true
 	}
@@ -126,4 +130,23 @@ func (c *TTLSyncMap) Clear() {
 	//避免切换后仍有用户在读旧数据，所以这里延迟一下再清空数据，
 	time.Sleep(clearDataDelayTime)
 	c.data[oldIdx] = sync.Map{}
+}
+
+// SetTimerAge 设置淘汰定时器的时间，比如1小时，则每小时扫一下数据进行淘汰
+func (c *TTLSyncMap) SetTimerAge(age time.Duration) {
+	c.timerAge = age
+}
+
+// aging 数据老化
+func (c *TTLSyncMap) aging() {
+	for {
+		if c.timerAge != 0 {
+			time.Sleep(c.timerAge)
+		} else {
+			time.Sleep(defaultTimerAging)
+		}
+		c.Range(func(key, value interface{}) bool {
+			return true
+		})
+	}
 }
