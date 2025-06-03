@@ -35,7 +35,7 @@ func New(ttl time.Duration) *TTLSyncMap {
 		ttl:      ttl,
 		idx:      0,
 	}
-	t.aging()
+	go t.aging()
 	return t
 }
 
@@ -80,7 +80,7 @@ func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, lo
 // LoadAndDelete deletes the value for a key, returning the previous value if any.
 // The loaded result reports whether the key was present.
 // LoadAndDelete删除键的值，如果有，则返回上一个值。
-// 加载的结果报告密钥是否存在。
+// 加载的结果报告key是否存在。
 func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	d, ok := c.data[c.idx].LoadAndDelete(key)
 	if ok && d != nil && time.Since(d.(ttlVal).expireAt) <= c.ttl {
