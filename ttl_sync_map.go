@@ -1,3 +1,4 @@
+// Package ttlsyncmap provides a concurrent map with a fixed TTL per write.
 package ttlsyncmap
 
 import (
@@ -6,147 +7,224 @@ import (
 	"time"
 )
 
-const (
-	//clearDataDelayTime 清除数据时，延迟多久清空，避免切换下标的时候还有用户在读，会有panic
-	clearDataDelayTime = 200 * time.Millisecond
-	defaultTimerAging  = 10 * time.Second
-)
+const defaultTimerAging = 10 * time.Second
 
-// TTLSyncMap 并发安全，带有时效性的缓存
+// TTLSyncMap is a concurrent map whose entries expire after a fixed TTL.
+// It must not be copied after first use. The zero value has an immediate TTL;
+// use New to configure a positive TTL. Call Close when the map is no longer used.
 type TTLSyncMap struct {
-	data     [2]sync.Map   // 数据段 ps:unsafe.Sizeof=80
-	ttl      time.Duration // 有效时间，比如1个小时：time.Hour ps:unsafe.Sizeof=8
-	timerAge time.Duration // 数据淘汰定时器:time.Hour ps:unsafe.Sizeof=8
-	clearing int32         // 并发清除数据时，只允许一个穿透进去清理 ps:unsafe.Sizeof=4
-	idx      int8          // 当前使用的下标 ps:unsafe.Sizeof=1
+	timerAge atomic.Value // time.Duration; safe when embedded on 32-bit platforms.
+	ttl      time.Duration
+	once     sync.Once
+	data     atomic.Value // *sync.Map; Clear publishes a new generation.
+	done     chan struct{}
+	stopped  chan struct{}
+	reset    chan struct{}
+	close    sync.Once
+}
+
+// An entry stays associated with its key until it is marked deleted and removed
+// under mu. Writers that encounter a deleted entry retry against the map.
+// Values are immutable snapshots, so live reads need no entry lock.
+type entry struct {
+	mu    sync.Mutex
+	value atomic.Value // *ttlVal; a typed nil means deleted.
 }
 
 type ttlVal struct {
-	val interface{}
-	// 过期时间
+	val      interface{}
 	expireAt time.Time
 }
 
-// New New
+// New returns a map with the given TTL. A non-positive TTL expires immediately.
+// Each successful write starts a new TTL; reads do not extend it.
 func New(ttl time.Duration) *TTLSyncMap {
-	t := &TTLSyncMap{
-		data:     [2]sync.Map{{}, {}},
-		clearing: 0,
-		ttl:      ttl,
-		idx:      0,
-	}
-	go t.aging()
-	return t
+	c := &TTLSyncMap{ttl: ttl}
+	c.init()
+	return c
 }
 
-// Load 查询
-func (c *TTLSyncMap) Load(key interface{}) (data interface{}, ok bool) {
-	if d, ok := c.data[c.idx].Load(key); ok && d != nil {
-		m := d.(ttlVal)
-		if time.Since(m.expireAt) <= c.ttl {
-			return m.val, true
-		}
-		c.data[c.idx].Delete(key)
-	}
-
-	return nil, false
+func (c *TTLSyncMap) init() {
+	c.once.Do(func() {
+		c.data.Store(&sync.Map{})
+		c.timerAge.Store(defaultTimerAging)
+		c.done = make(chan struct{})
+		c.stopped = make(chan struct{})
+		c.reset = make(chan struct{}, 1)
+		go c.aging()
+	})
 }
 
-// Store 存储
-func (c *TTLSyncMap) Store(key interface{}, val interface{}) {
-	c.data[c.idx].Store(key, ttlVal{val: val, expireAt: time.Now()})
+func (c *TTLSyncMap) current() *sync.Map {
+	c.init()
+	return c.data.Load().(*sync.Map)
 }
 
-// Delete 删除key
-func (c *TTLSyncMap) Delete(key interface{}) {
-	c.data[c.idx].Delete(key)
-}
-
-// LoadOrStore returns the existing value for the key if present.
-// Otherwise, it stores and returns the given value.
-// The loaded result is true if the value was loaded, false if stored.
-// LoadOrStore返回键的现有值（如果存在）。
-// 否则，它将存储并返回给定的值。
-// 如果加载了值，则加载的结果为true；如果存储了值，则加载的结果为false。
-func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
-	d, ok := c.data[c.idx].Load(key)
-	if ok && d != nil && time.Since(d.(ttlVal).expireAt) <= c.ttl {
-		return d.(ttlVal).val, true
-	}
-	c.data[c.idx].Store(key, ttlVal{val: value, expireAt: time.Now()})
-	return value, false
-}
-
-// LoadAndDelete deletes the value for a key, returning the previous value if any.
-// The loaded result reports whether the key was present.
-// LoadAndDelete删除键的值，如果有，则返回上一个值。
-// 加载的结果报告key是否存在。
-func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
-	d, ok := c.data[c.idx].LoadAndDelete(key)
-	if ok && d != nil && time.Since(d.(ttlVal).expireAt) <= c.ttl {
-		return d.(ttlVal).val, true
-	}
-	return nil, false
-}
-
-// Range calls f sequentially for each key and value present in the map.
-// If f returns false, range stops the iteration.
-//
-// Range does not necessarily correspond to any consistent snapshot of the Map's
-// contents: no key will be visited more than once, but if the value for any key
-// is stored or deleted concurrently, Range may reflect any mapping for that key
-// from any point during the Range call.
-//
-// Range may be O(N) with the number of elements in the map even if f returns
-// false after a constant number of calls.
-func (c *TTLSyncMap) Range(f func(key, value interface{}) bool) {
-	ff := func(key, d interface{}) bool {
-		if d != nil {
-			m := d.(ttlVal)
-			if time.Since(m.expireAt) <= c.ttl {
-				return f(key, d.(ttlVal).val)
+// Load returns the value for key if it has not expired.
+func (c *TTLSyncMap) Load(key interface{}) (value interface{}, ok bool) {
+	data := c.current()
+	if item, found := data.Load(key); found {
+		e := item.(*entry)
+		v := e.value.Load().(*ttlVal)
+		if v != nil {
+			if time.Until(v.expireAt) > 0 {
+				return v.val, true
 			}
-			c.Delete(key)
+			removeExpired(data, key, e, v)
 		}
-		return true
 	}
-	c.data[c.idx].Range(ff)
+	return nil, false
 }
 
-// Clear 清空数据
-func (c *TTLSyncMap) Clear() {
-	//防止并发清除
-	if !atomic.CompareAndSwapInt32(&c.clearing, 0, 1) {
-		//sleep1毫秒保证idx已经切换
-		time.Sleep(1 * time.Millisecond)
-		return
-	}
-	//避免读到旧数据，先马上切下标
-	oldIdx := c.idx
-	c.idx ^= 1
-
-	defer atomic.StoreInt32(&c.clearing, 0)
-
-	//避免切换后仍有用户在读旧数据，所以这里延迟一下再清空数据，
-	time.Sleep(clearDataDelayTime)
-	c.data[oldIdx] = sync.Map{}
+// Store stores value for key and resets its TTL.
+func (c *TTLSyncMap) Store(key, value interface{}) {
+	c.store(key, value, false)
 }
 
-// SetTimerAge 设置淘汰定时器的时间，比如1小时，则每小时扫一下数据进行淘汰
-func (c *TTLSyncMap) SetTimerAge(age time.Duration) {
-	c.timerAge = age
+// LoadOrStore atomically returns the existing, unexpired value if present.
+// Otherwise it stores and returns value. loaded is true only for an existing value.
+func (c *TTLSyncMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
+	return c.store(key, value, true)
 }
 
-// aging 数据老化
-func (c *TTLSyncMap) aging() {
+func (c *TTLSyncMap) store(key, value interface{}, loadOnly bool) (interface{}, bool) {
+	data := c.current()
 	for {
-		if c.timerAge != 0 {
-			time.Sleep(c.timerAge)
-		} else {
-			time.Sleep(defaultTimerAging)
+		item, found := data.Load(key)
+		if !found {
+			e := &entry{}
+			e.value.Store(&ttlVal{val: value, expireAt: time.Now().Add(c.ttl)})
+			item, found = data.LoadOrStore(key, e)
+			if !found {
+				return value, false
+			}
 		}
-		c.Range(func(key, value interface{}) bool {
+		e := item.(*entry)
+		if loadOnly {
+			if v := e.value.Load().(*ttlVal); v != nil && time.Until(v.expireAt) > 0 {
+				return v.val, true
+			}
+		}
+		e.mu.Lock()
+		v := e.value.Load().(*ttlVal)
+		if v == nil {
+			e.mu.Unlock()
+			continue
+		}
+		if loadOnly && time.Until(v.expireAt) > 0 {
+			e.mu.Unlock()
+			return v.val, true
+		}
+		e.value.Store(&ttlVal{val: value, expireAt: time.Now().Add(c.ttl)})
+		e.mu.Unlock()
+		return value, false
+	}
+}
+
+// Delete removes key.
+func (c *TTLSyncMap) Delete(key interface{}) {
+	c.LoadAndDelete(key)
+}
+
+// LoadAndDelete atomically deletes key and returns its previous value if unexpired.
+func (c *TTLSyncMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
+	data := c.current()
+	if item, found := data.Load(key); found {
+		e := item.(*entry)
+		e.mu.Lock()
+		v := e.value.Load().(*ttlVal)
+		live := v != nil && time.Until(v.expireAt) > 0
+		if v != nil {
+			e.value.Store((*ttlVal)(nil))
+			data.Delete(key)
+		}
+		e.mu.Unlock()
+		if live {
+			return v.val, true
+		}
+	}
+	return nil, false
+}
+
+// Range calls f sequentially for each unexpired key and value until f returns
+// false. No key is visited more than once. Range is not a consistent snapshot:
+// it may observe any value stored during the call. f may call any map method.
+// A Range overlapping Clear may finish visiting the previous generation.
+func (c *TTLSyncMap) Range(f func(key, value interface{}) bool) {
+	data := c.current()
+	data.Range(func(key, item interface{}) bool {
+		e := item.(*entry)
+		v := e.value.Load().(*ttlVal)
+		if v == nil {
 			return true
-		})
+		}
+		if time.Until(v.expireAt) > 0 {
+			return f(key, v.val)
+		}
+		removeExpired(data, key, e, v)
+		return true
+	})
+}
+
+// removeExpired only removes the observed value. A concurrent Store must not
+// lose its replacement to an expired reader or a background sweep.
+func removeExpired(data *sync.Map, key interface{}, e *entry, observed *ttlVal) {
+	e.mu.Lock()
+	if e.value.Load().(*ttlVal) == observed {
+		e.value.Store((*ttlVal)(nil))
+		data.Delete(key)
+	}
+	e.mu.Unlock()
+}
+
+// Clear atomically replaces the map with an empty generation, without waiting
+// for readers. Operations overlapping Clear may finish on the old generation.
+func (c *TTLSyncMap) Clear() {
+	c.init()
+	c.data.Store(&sync.Map{})
+}
+
+// SetTimerAge sets the background cleanup interval and reschedules the next
+// sweep. Non-positive intervals restore the default of ten seconds.
+// Expiration on reads is independent of this interval.
+func (c *TTLSyncMap) SetTimerAge(age time.Duration) {
+	c.init()
+	if age <= 0 {
+		age = defaultTimerAging
+	}
+	c.timerAge.Store(age)
+	select {
+	case c.reset <- struct{}{}:
+	default:
+	}
+}
+
+// Close stops background cleanup and waits for it to exit. It is idempotent.
+// Map operations still work after Close, including lazy expiration on reads.
+func (c *TTLSyncMap) Close() {
+	c.init()
+	c.close.Do(func() { close(c.done) })
+	<-c.stopped
+}
+
+func (c *TTLSyncMap) aging() {
+	defer close(c.stopped)
+	timer := time.NewTimer(c.timerAge.Load().(time.Duration))
+	defer timer.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-c.reset:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
+			c.Range(func(key, value interface{}) bool { return true })
+		}
+		timer.Reset(c.timerAge.Load().(time.Duration))
 	}
 }
